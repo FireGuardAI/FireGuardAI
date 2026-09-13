@@ -1,0 +1,52 @@
+services:
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: fireguard-chromadb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/chromadb:/data 
+    env_file:
+      - .env
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ALLOW_RESET=FALSE       
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000 && exec 3<&-'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    networks:
+      - fireguard-net
+
+  ingest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ingest
+    container_name: fireguard-ingest
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb 
+    volumes:
+      - ./raw_documents:/app/raw_documents:ro
+      - ./data:/app/data
+      - ./data/hf_cache:/app/.cache/huggingface
+    networks:
+      - fireguard-net
+    profiles:
+      - ingest
+
+networks:
+  fireguard-net:
+    driver: bridge

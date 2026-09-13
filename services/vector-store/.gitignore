@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+data/chromadb/
+data/hf_cache
+data/*.pkl
+*.egg-info/
+.mypy_cache/
+.ruff_cache/

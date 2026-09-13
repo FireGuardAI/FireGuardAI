@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.12-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user -r requirements.txt
+
+FROM python:3.12-slim
+WORKDIR /app
+
+RUN groupadd -r fireguard && useradd -r -g fireguard fireguard
+
+COPY --from=builder /root/.local /home/fireguard/.local
+COPY src/ ./src/
+COPY main.py .
+
+ENV PATH=/home/fireguard/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/app/.cache/huggingface
+
+RUN mkdir -p /app/data /app/.cache/huggingface && chown -R fireguard:fireguard /app
+USER fireguard
+
+CMD ["python", "main.py"]
