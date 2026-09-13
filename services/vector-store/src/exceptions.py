@@ -1,4 +1,3 @@
-
 class FireGuardError(Exception):
     """Base exception for the FireGuard vector store domain."""
 

@@ -6,12 +6,13 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./data/chromadb:/data 
+      - ./data/chromadb:/data
     env_file:
       - .env
     environment:
       - IS_PERSISTENT=TRUE
-      - ALLOW_RESET=FALSE       
+      - ALLOW_RESET=FALSE
+      - CHROMA_SERVER_CORS_ALLOW_ORIGINS=["http://localhost:3001"]
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000 && exec 3<&-'"]
       interval: 30s
@@ -26,6 +27,19 @@ services:
     networks:
       - fireguard-net
 
+  chromadb-ui:
+    build:
+      context: https://github.com/flanker/chromadb-admin.git
+    container_name: fireguard-chromadb-ui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    networks:
+      - fireguard-net
+
   ingest:
     build:
       context: .
@@ -37,7 +51,7 @@ services:
     env_file:
       - .env
     environment:
-      - CHROMA_HOST=chromadb 
+      - CHROMA_HOST=chromadb
     volumes:
       - ./raw_documents:/app/raw_documents:ro
       - ./data:/app/data
