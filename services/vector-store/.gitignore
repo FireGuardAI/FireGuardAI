@@ -3,8 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 data/chromadb/
-data/hf_cache/
-data/*.db
+data/hf_cache
 data/*.pkl
 *.egg-info/
 .mypy_cache/

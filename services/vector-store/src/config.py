@@ -1,3 +1,4 @@
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -16,7 +17,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=80, ge=0)
 
     raw_documents_dir: str = Field(default="raw_documents")
-    bm25_index_path: str = Field(default="data/bm25.db")
+    bm25_index_path: str = Field(default="data/bm25_index.pkl")
 
     log_level: str = Field(default="INFO")
 
