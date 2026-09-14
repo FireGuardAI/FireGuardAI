@@ -15,6 +15,7 @@ RUN groupadd -r fireguard && useradd -r -g fireguard fireguard
 COPY --from=builder /root/.local /home/fireguard/.local
 COPY src/ ./src/
 COPY main.py .
+COPY scripts/ ./scripts/
 
 ENV PATH=/home/fireguard/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \

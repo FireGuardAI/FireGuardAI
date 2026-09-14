@@ -19,7 +19,6 @@ class DocumentChunk:
 
 
 class PDFProcessor:
-
     def __init__(self, chunk_size: int | None = None, chunk_overlap: int | None = None):
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size or settings.chunk_size,

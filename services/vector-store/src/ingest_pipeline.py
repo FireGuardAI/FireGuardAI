@@ -29,4 +29,4 @@ class IngestPipeline:
         embeddings = self._embedding_service.embed([c.text for c in chunks])
         self._vector_repo.upsert_chunks(chunks, embeddings)
         self._sparse_index_builder.build_and_save(chunks)
-        logger.info(f"Ingestion complete for {doc_name}")
+        logger.info(f"✅ Ingestion complete for {doc_name}")

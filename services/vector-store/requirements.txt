@@ -2,10 +2,9 @@
 
 torch==2.4.1+cpu
 
-chromadb==0.5.23   
+chromadb==0.5.23 
 pymupdf>=1.23.0,<1.25.0
 sentence-transformers>=2.5.0,<3.0.0
-rank-bm25>=0.2.2,<0.3.0
 langchain-text-splitters>=0.0.1,<0.1.0
 pydantic>=2.6.0,<3.0.0
 pydantic-settings>=2.2.0,<3.0.0
