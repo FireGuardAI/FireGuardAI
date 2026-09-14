@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 data/chromadb/
 data/hf_cache/
+data/*.db
 data/*.pkl
 *.egg-info/
 .mypy_cache/

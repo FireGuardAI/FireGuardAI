@@ -1,12 +1,12 @@
 services:
   chromadb:
-    image: chromadb/chroma:0.5.23
+    image: chromadb/chroma:0.5.23  
     container_name: fireguard-chromadb
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8000:8000" 
     volumes:
-      - ./data/chromadb:/data
+      - ./data/chromadb:/data 
     env_file:
       - .env
     environment:
@@ -33,7 +33,7 @@ services:
     container_name: fireguard-chromadb-ui
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3001:3001"  
     depends_on:
       chromadb:
         condition: service_healthy
@@ -51,7 +51,7 @@ services:
     env_file:
       - .env
     environment:
-      - CHROMA_HOST=chromadb
+      - CHROMA_HOST=chromadb  
     volumes:
       - ./raw_documents:/app/raw_documents:ro
       - ./data:/app/data
@@ -59,7 +59,7 @@ services:
     networks:
       - fireguard-net
     profiles:
-      - ingest
+      - ingest 
 
 networks:
   fireguard-net:
