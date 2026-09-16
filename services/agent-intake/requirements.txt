@@ -1,0 +1,10 @@
+# Step 1: API skeleton only.
+# Step 2 adds groq + tenacity (Groq LLM client, with real retries).
+# Step 4 adds slowapi (rate limiting).
+# No ML/embedding libraries needed anywhere in this repo — the LLM call
+# is a remote API (Groq), not a locally-loaded model.
+
+fastapi>=0.110.0,<0.120.0
+uvicorn[standard]>=0.28.0,<0.30.0
+pydantic>=2.6.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0

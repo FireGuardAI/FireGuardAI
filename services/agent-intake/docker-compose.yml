@@ -1,0 +1,32 @@
+services:
+  agent-intake:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-intake
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8004:8004"   # localhost only, matching the other repos' convention
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+    # NOTE: this service doesn't call any other FireGuard service
+    # directly (it's the front door — a future API Gateway/Orchestrator
+    # calls it, not the other way around), so joining fireguard-net
+    # isn't strictly required today. It's joined anyway for consistency
+    # and so an orchestrator can reach it by service name later.
+
+networks:
+  fireguard-net:
+    external: true
+    # same network fireguard-vector-store's docker-compose.yml creates.
+    # If your fireguard-vector-store folder isn't named exactly that,
+    # check `docker network ls` and update this to match.
+    name: fireguard-vector-store_fireguard-net
