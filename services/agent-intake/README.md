@@ -10,7 +10,7 @@ into structured `BuildingContext`-shaped JSON for downstream services.
 
 - [x] **Step 1** — FastAPI skeleton, config/logger/exceptions, `/health`,
       Dockerized + joined to `fireguard-vector-store`'s Docker network
-- [ ] Step 2 — Intake engine (Groq integration)
+- [x] **Step 2** — Intake engine (Groq integration, retry + defensive parsing), `/health/groq`
 - [ ] Step 3 — `/api/v1/intake` endpoint
 - [ ] Step 4 — Production hardening (pre-filter layer, rate limiting, tests)
 
@@ -59,5 +59,25 @@ troubleshooting note in `fireguard-agent-retrieval`'s README — your
 `docker-compose.yml`'s `networks:` section.
 
 Port `8004` — `8000` is ChromaDB, `8001` is `fireguard-agent-retrieval`,
-`8002` is `fireguard-agent-compliance` (`8003` is reserved for a future
-`fireguard-agent-report`, per the reference doc's system diagram).
+`8002` is `fireguard-agent-compliance` (`8003` is `fireguard-agent-report`).
+
+## Step 2 — Intake engine (Groq)
+
+`app/services/intake_engine.py` — the reference doc's `AsyncGroq` usage
+was already correct (unlike `fireguard-agent-report`'s original blocking
+sync client bug), but had no retry logic and no defensive response
+parsing. Both added here: Groq gets `GROQ_MAX_RETRIES` attempts
+(exponential backoff), and malformed/schema-mismatched JSON raises a
+clean `IntakeResponseParsingError` instead of an uncaught crash.
+
+```powershell
+docker compose up -d --build
+curl.exe http://localhost:8004/health/groq
+```
+
+Expected:
+```json
+{"status":"ok","model":"llama-3.1-8b-instant"}
+```
+
+Makes one real (tiny) Groq API call — don't poll it tightly.

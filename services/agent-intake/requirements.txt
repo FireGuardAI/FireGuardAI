@@ -1,5 +1,8 @@
 # Step 1: API skeleton only.
-# Step 2 adds groq + tenacity (Groq LLM client, with real retries).
+# Step 2: Intake engine
+groq>=0.9.0,<0.30.0
+tenacity>=8.2.0,<9.0.0
+
 # Step 4 adds slowapi (rate limiting).
 # No ML/embedding libraries needed anywhere in this repo — the LLM call
 # is a remote API (Groq), not a locally-loaded model.
