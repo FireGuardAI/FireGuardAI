@@ -1,0 +1,12 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    image: fireguard-frontend:latest
+    container_name: fireguard-frontend-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80" # PC port 3000 and container port 80
