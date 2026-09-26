@@ -8,4 +8,39 @@ body {
   .print-hidden {
     display: none !important;
   }
+
+  /* Without this, Chrome/Firefox strip background colors by default on
+     print (the "Background graphics" checkbox is usually off) — the
+     compliance status badges (StatusBadge.tsx) rely entirely on tinted
+     backgrounds + colored text to distinguish COMPLIANT/NON_COMPLIANT/
+     etc. at a glance, so without it every badge prints as identical
+     plain text and the report loses its whole visual point. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  /* A finding card or the executive-summary card splitting across a
+     page boundary mid-sentence is the single most common "this doesn't
+     look like a real PDF" complaint with print-to-PDF output. */
+  .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  @page {
+    margin: 16mm 14mm;
+  }
 }

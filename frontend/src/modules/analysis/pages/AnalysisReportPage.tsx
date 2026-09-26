@@ -32,15 +32,15 @@ function AnalysisReportPage() {
   const canExportPdf = account.pdf_export_enabled
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-3xl print:max-w-none">
       <Link to="/dashboard" className="print-hidden inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
         <ArrowLeftIcon className="h-4 w-4" />
         Back to dashboard
       </Link>
 
-      <AiDisclaimerBanner className="mt-4" />
+      <AiDisclaimerBanner className="print-avoid-break mt-4" />
 
-      <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="print-avoid-break mt-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
             {report.mode === 'pdf' ? 'Building plan (PDF)' : 'Text description'} · {formatDate(report.submittedAt)}
@@ -80,7 +80,7 @@ function AnalysisReportPage() {
       </div>
 
       {(report.executiveSummaryMarkdown || report.summary) && (
-        <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+        <div className="print-avoid-break mt-6 rounded-xl border border-slate-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-slate-900">Executive summary</h2>
           <div className="mt-3">
             {report.executiveSummaryMarkdown ? renderMarkdown(report.executiveSummaryMarkdown) : <p className="text-sm text-slate-700">{report.summary}</p>}
@@ -96,7 +96,7 @@ function AnalysisReportPage() {
         ) : (
           <ul className="mt-3 space-y-3">
             {report.detailedChecks.map((check, index) => (
-              <li key={index} className="rounded-xl border border-slate-200 bg-white p-4">
+              <li key={index} className="print-avoid-break rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-mono text-xs font-medium text-slate-500">{check.rule_clause}</p>
                   <StatusBadge status={check.status} />

@@ -7,7 +7,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   return (
-    <div className="min-h-screen bg-slate-50 lg:flex">
+    <div className="min-h-screen bg-slate-50 lg:flex print:block print:min-h-0 print:bg-white">
       <div className="print-hidden hidden lg:block">
         <div className="sticky top-0 h-screen">
           <Sidebar />
@@ -46,8 +46,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8">
-        <div className="mx-auto max-w-6xl">{children}</div>
+      <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 print:flex-none print:p-0">
+        <div className="mx-auto max-w-6xl print:max-w-none">{children}</div>
       </main>
     </div>
   )
