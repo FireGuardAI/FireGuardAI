@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     report_rate_limit: str = Field(default="10/minute")
 
+    # Port for the MCP server sidecar process (app/mcp_server.py) — a
+    # separate process from the REST app in this same container/image.
+    mcp_port: int = Field(default=8013, gt=0)
+
     log_level: str = Field(default="INFO")
 
     class Config:
