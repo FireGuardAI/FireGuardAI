@@ -1,0 +1,20 @@
+# Root-level env (Postgres credentials, frontend build arg — see .env.example)
+.env
+
+# Runtime data volumes created by `docker compose up`
+services/vector-store/data/
+services/agent-retrieval/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+dist/

@@ -1,0 +1,363 @@
+
+# Root orchestration for the whole FireGuard AI stack, now that every
+# service lives in one repo. Each service still has its own
+# docker-compose.yml (kept for standalone/legacy use), but those wire
+# themselves together with `networks: external: true` + a guessed
+# auto-generated network name (e.g. "fireguard-vector-store_fireguard-net")
+# — a real anti-pattern once everything is in one repo: it only works if
+# every directory happens to keep its exact original name, and gives no
+# single place to see how the services actually depend on each other.
+# This file replaces that with one real internal network and explicit
+# depends_on chains — `docker compose up -d` here is now the only command
+# needed to bring up the entire stack.
+#
+# Ordering that matters (encoded below via depends_on):
+#   chromadb, postgres  -->  agent-retrieval(+mcp), api-gateway, agent-orchestrator
+#   agent-retrieval-mcp, agent-intake-mcp, agent-report-mcp  -->  agent-orchestrator
+#   agent-intake, agent-compliance, agent-report  -->  api-gateway
+#
+# Before first run: copy every services/*/.env.example (and
+# frontend/.env.example) to a sibling .env and fill in the real secrets —
+# see README.md.
+
+services:
+  # ---- Data layer -------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fireguard-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fireguard}
+      POSTGRES_USER: ${POSTGRES_USER:-fireguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in services/api-gateway/.env}
+    volumes:
+      - fireguard-postgres-data:/var/lib/postgresql/data
+      - ./services/api-gateway/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fireguard-net
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: fireguard-chromadb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./services/vector-store/data/chromadb:/data
+    env_file:
+      - ./services/vector-store/.env
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ALLOW_RESET=FALSE
+      - CHROMA_SERVER_CORS_ALLOW_ORIGINS=["http://localhost:3001"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000 && exec 3<&-'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fireguard-net
+
+  chromadb-ui:
+    build:
+      context: https://github.com/flanker/chromadb-admin.git
+    container_name: fireguard-chromadb-ui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    networks:
+      - fireguard-net
+
+  # One-shot: `docker compose --profile ingest run --rm ingest` to
+  # (re)index services/vector-store/raw_documents into ChromaDB + the
+  # SQLite FTS5 sparse index. Not part of the default `up`.
+  ingest:
+    build:
+      context: ./services/vector-store
+      dockerfile: docker/Dockerfile.ingest
+    container_name: fireguard-ingest
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    env_file:
+      - ./services/vector-store/.env
+    environment:
+      - CHROMA_HOST=chromadb
+    volumes:
+      - ./services/vector-store/raw_documents:/app/raw_documents:ro
+      - ./services/vector-store/data:/app/data
+      - ./services/vector-store/data/hf_cache:/app/.cache/huggingface
+    networks:
+      - fireguard-net
+    profiles:
+      - ingest
+
+  # ---- Retrieval ----------------------------------------------------------
+
+  agent-retrieval:
+    build:
+      context: ./services/agent-retrieval
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-retrieval
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8001"
+    env_file:
+      - ./services/agent-retrieval/.env
+    environment:
+      - CHROMA_HOST=chromadb
+    volumes:
+      - ./services/vector-store/data:/app/data:ro
+      - ./services/agent-retrieval/data/hf_cache:/app/.cache/huggingface
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  # MCP sidecar: same image, exposes semantic_search/classification_search/
+  # corpus-introspection tools over Streamable HTTP for the agentic loop.
+  agent-retrieval-mcp:
+    build:
+      context: ./services/agent-retrieval
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-retrieval-mcp
+    command: ["python", "-m", "app.mcp_server"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8011:8011"
+    env_file:
+      - ./services/agent-retrieval/.env
+    environment:
+      - CHROMA_HOST=chromadb
+    volumes:
+      - ./services/vector-store/data:/app/data:ro
+      - ./services/agent-retrieval/data/hf_cache:/app/.cache/huggingface
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8011/mcp')\" || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fireguard-net
+
+  # ---- Core agents ----------------------------------------------------------
+
+  agent-intake:
+    build:
+      context: ./services/agent-intake
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-intake
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8004:8004"
+    env_file:
+      - ./services/agent-intake/.env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  # MCP sidecar: exposes extract_building_details for the agentic loop.
+  agent-intake-mcp:
+    build:
+      context: ./services/agent-intake
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-intake-mcp
+    command: ["python", "-m", "app.mcp_server"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8014:8014"
+    env_file:
+      - ./services/agent-intake/.env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8014/mcp')\" || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  agent-compliance:
+    build:
+      context: ./services/agent-compliance
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-compliance
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8002:8002"
+    env_file:
+      - ./services/agent-compliance/.env
+    depends_on:
+      agent-retrieval:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  agent-report:
+    build:
+      context: ./services/agent-report
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-report
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8003:8003"
+    env_file:
+      - ./services/agent-report/.env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  # MCP sidecar: exposes draft_executive_summary for the agentic loop.
+  agent-report-mcp:
+    build:
+      context: ./services/agent-report
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-report-mcp
+    command: ["python", "-m", "app.mcp_server"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8013:8013"
+    env_file:
+      - ./services/agent-report/.env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8013/mcp')\" || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
+  # ---- Agentic loop orchestrator --------------------------------------------
+
+  agent-orchestrator:
+    build:
+      context: ./services/agent-orchestrator
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-orchestrator
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8020:8020"
+    env_file:
+      - ./services/agent-orchestrator/.env
+    environment:
+      - RETRIEVAL_MCP_URL=http://agent-retrieval-mcp:8011/mcp
+      - INTAKE_MCP_URL=http://agent-intake-mcp:8014/mcp
+      - REPORT_MCP_URL=http://agent-report-mcp:8013/mcp
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-fireguard}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fireguard}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-retrieval-mcp:
+        condition: service_healthy
+      agent-intake-mcp:
+        condition: service_healthy
+      agent-report-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8020/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fireguard-net
+
+  # ---- Gateway + frontend ----------------------------------------------------
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-api-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8080"
+    env_file:
+      - ./services/api-gateway/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fireguard}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fireguard}
+      INTAKE_SERVICE_URL: http://agent-intake:8004
+      COMPLIANCE_SERVICE_URL: http://agent-compliance:8002
+      REPORT_SERVICE_URL: http://agent-report:8003
+      CHROMA_HOST: chromadb
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-intake:
+        condition: service_healthy
+      agent-compliance:
+        condition: service_healthy
+      agent-report:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - fireguard-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8090}
+    image: fireguard-frontend:latest
+    container_name: fireguard-frontend-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - fireguard-net
+
+volumes:
+  fireguard-postgres-data:
+
+networks:
+  fireguard-net:
+    driver: bridge
