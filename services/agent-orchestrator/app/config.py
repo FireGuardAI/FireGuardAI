@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     mcp_connect_timeout_seconds: float = Field(default=15.0, gt=0)
     mcp_call_timeout_seconds: float = Field(default=60.0, gt=0)
 
+    gemini_api_key: str
+    gemini_model_name: str = Field(default="gemini-3.5-flash")
+    gemini_timeout_seconds: float = Field(default=180.0, gt=0)
+    gemini_max_retries: int = Field(default=3, ge=0)
+
+    # Hard budget enforced by the ORCHESTRATOR, not the model — an
+    # unbounded tool-calling loop is not viable at free-tier daily quota.
+    max_loop_turns: int = Field(default=6, gt=0)
+    max_tool_calls: int = Field(default=24, gt=0)
+
     database_url: str = Field(
         default="postgresql://fireguard:fireguard@postgres:5432/fireguard"
     )
