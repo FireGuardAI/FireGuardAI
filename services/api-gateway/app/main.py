@@ -184,17 +184,100 @@ async def _release_report(pool, user_id: str, plan: str) -> None:
             await connection.execute("UPDATE users SET report_credits=report_credits+1 WHERE id=$1::uuid", user_id)
 
 
-async def _finish_report(pool, user_id: str, plan: str, response: httpx.Response) -> None:
-    if response.status_code < 200 or response.status_code >= 300:
-        await _release_report(pool, user_id, plan)
-        return
+async def _persist_report_session(user_id: str, report_payload: dict) -> None:
+    external_session_id = str(uuid4())
     try:
-        payload = response.json()
-    except ValueError:
-        await _release_report(pool, user_id, plan)
-        return
-    if not payload.get("report"):
-        await _release_report(pool, user_id, plan)
+        async with app.state.db.acquire() as connection:
+            await connection.execute(
+                "INSERT INTO report_sessions "
+                "(user_id, external_session_id, metadata) VALUES ($1::uuid, $2, $3::jsonb) "
+                "ON CONFLICT (external_session_id) DO UPDATE SET last_active_at=now(), metadata=$3::jsonb",
+                user_id,
+                external_session_id,
+                json.dumps(report_payload),
+            )
+    except Exception as exc:
+        print(f"session metadata persistence failed: {exc}")
+
+
+# Fields intake produces for its own guardrail/bookkeeping purposes, or
+# that belong at a different level of the compliance request, and so
+# don't belong inside building_details — excluded rather than relying on
+# compliance's BuildingContext silently ignoring unknown keys, so this
+# stays correct even if that model later starts rejecting extras.
+# raw_description is excluded from building_details specifically because
+# it goes into AuditRequest as its own top-level sibling field instead.
+_INTAKE_ONLY_FIELDS = {"is_fire_safety_related", "is_safe_input", "sanitization_notes", "raw_description"}
+
+
+def _passthrough(upstream: httpx.Response) -> Response:
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json"),
+    )
+
+
+async def _run_pipeline_after_intake(
+    client: httpx.AsyncClient,
+    headers: dict,
+    user_id: str,
+    reserved_plan: str,
+    intake_response: httpx.Response,
+    building_name: str | None,
+    auditor_notes: str | None,
+) -> Response:
+    """Runs the compliance audit + report generation hops that follow a
+    successful intake call, and releases the reserved credit if any hop
+    fails. Shared by /analyze and /analyze/text, which only differ in how
+    they call intake (multipart file vs. JSON raw_prompt)."""
+    if intake_response.status_code >= 400:
+        await _release_report(app.state.db, user_id, reserved_plan)
+        return _passthrough(intake_response)
+
+    try:
+        intake_payload = intake_response.json()
+        building_details = {
+            k: v for k, v in intake_payload.items() if k not in _INTAKE_ONLY_FIELDS
+        }
+        compliance_response = await client.post(
+            f"{settings.compliance_service_url.rstrip('/')}/api/v1/audit",
+            json={
+                "building_details": building_details,
+                "raw_description": intake_payload.get("raw_description"),
+            },
+            headers=headers,
+        )
+        if compliance_response.status_code >= 400:
+            await _release_report(app.state.db, user_id, reserved_plan)
+            return _passthrough(compliance_response)
+        compliance_payload = compliance_response.json()
+
+        report_response = await client.post(
+            f"{settings.report_service_url.rstrip('/')}/api/v1/generate-report",
+            json={
+                "building_name": building_name or "Target Commercial Building",
+                "auditor_notes": auditor_notes,
+                "audit_data": {
+                    "overall_status": compliance_payload["overall_status"],
+                    "compliance_score": compliance_payload["compliance_score"],
+                    "detailed_checks": compliance_payload["detailed_checks"],
+                    "summary": compliance_payload["summary"],
+                },
+            },
+            headers=headers,
+        )
+        if report_response.status_code >= 400:
+            await _release_report(app.state.db, user_id, reserved_plan)
+            return _passthrough(report_response)
+        report_payload = report_response.json()
+    except (ValueError, httpx.ConnectError, httpx.TimeoutException) as exc:
+        await _release_report(app.state.db, user_id, reserved_plan)
+        raise HTTPException(status_code=503, detail="Analysis pipeline unavailable") from exc
+
+    merged = {**compliance_payload, **report_payload}
+    await _persist_report_session(user_id, merged)
+    return JSONResponse(content=merged)
 
 
 @app.exception_handler(Exception)
@@ -311,51 +394,20 @@ async def analyze(
 
     headers = {"X-API-Key": settings.internal_api_key}
     multipart = {"file": (file.filename or "building.pdf", contents, file.content_type)}
-    data = {
-        key: value
-        for key, value in {"building_name": building_name, "auditor_notes": auditor_notes}.items()
-        if value is not None
-    }
     timeout = httpx.Timeout(settings.request_timeout_seconds)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            upstream = await client.post(
+            intake_response = await client.post(
                 f"{settings.intake_service_url.rstrip('/')}/api/v1/intake/document",
                 files=multipart,
-                data=data,
                 headers=headers,
+            )
+            return await _run_pipeline_after_intake(
+                client, headers, user_id, reserved_plan, intake_response, building_name, auditor_notes
             )
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         await _release_report(app.state.db, user_id, reserved_plan)
         raise HTTPException(status_code=503, detail="Intake service unavailable") from exc
-
-    await _finish_report(app.state.db, user_id, reserved_plan, upstream)
-
-    if 200 <= upstream.status_code < 300:
-        try:
-            payload = upstream.json()
-            report = payload.get("report") or payload
-            external_session_id = report.get("session_id") if isinstance(report, dict) else None
-            if external_session_id:
-                async with app.state.db.acquire() as connection:
-                    await connection.execute(
-                        "INSERT INTO report_sessions "
-                        "(user_id, external_session_id, metadata) VALUES ($1::uuid, $2, $3::jsonb) "
-                        "ON CONFLICT (external_session_id) DO UPDATE SET last_active_at=now(), metadata=$3::jsonb",
-                        user_id,
-                        external_session_id,
-                        json.dumps(payload),
-                    )
-        except Exception as exc:
-            
-            
-            print(f"session metadata persistence failed: {exc}")
-
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        media_type=upstream.headers.get("content-type", "application/json"),
-    )
 
 
 @app.post("/analyze/text")
@@ -376,41 +428,12 @@ async def analyze_text(
                 json={"raw_prompt": body.raw_prompt},
                 headers=headers,
             )
-            if intake_response.status_code >= 400:
-                await _release_report(app.state.db, _user_id, reserved_plan)
-                return Response(
-                    content=intake_response.content,
-                    status_code=intake_response.status_code,
-                    media_type=intake_response.headers.get("content-type", "application/json"),
-                )
-
-            attributes = intake_response.json()
-            attributes.update(
-                {
-                    key: value
-                    for key, value in {
-                        "building_name": body.building_name,
-                        "auditor_notes": body.auditor_notes,
-                    }.items()
-                    if value is not None
-                }
+            return await _run_pipeline_after_intake(
+                client, headers, _user_id, reserved_plan, intake_response, body.building_name, body.auditor_notes
             )
-            pipeline_response = await client.post(
-                f"{settings.retrieval_service_url.rstrip('/')}/api/v1/pipeline/run",
-                json=attributes,
-                headers=headers,
-            )
-    except (ValueError, httpx.ConnectError, httpx.TimeoutException) as exc:
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
         await _release_report(app.state.db, _user_id, reserved_plan)
-        raise HTTPException(status_code=503, detail="Analysis pipeline unavailable") from exc
-
-    await _finish_report(app.state.db, _user_id, reserved_plan, pipeline_response)
-
-    return Response(
-        content=pipeline_response.content,
-        status_code=pipeline_response.status_code,
-        media_type=pipeline_response.headers.get("content-type", "application/json"),
-    )
+        raise HTTPException(status_code=503, detail="Intake service unavailable") from exc
 
 
 @app.get("/account/me", response_model=AccountResponse)

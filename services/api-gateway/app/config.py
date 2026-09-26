@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = Field(default=60, gt=0)
     internal_api_key: str
     intake_service_url: str = "http://agent-intake:8004"
-    retrieval_service_url: str = "http://agent-retrieval:8001"
+    compliance_service_url: str = "http://agent-compliance:8002"
+    report_service_url: str = "http://agent-report:8003"
     request_timeout_seconds: float = Field(default=330.0, gt=0)
     max_upload_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
     analyze_rate_limit: str = "10/minute"
