@@ -20,12 +20,17 @@ from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.exceptions import IntakeEngineError, IntakeResponseParsingError
+from app.exceptions import GuardrailRejection, IntakeEngineError, IntakeResponseParsingError
 from app.logger import get_logger
 from app.prompts import INTAKE_SYSTEM_PROMPT
 from app.schemas import SanitizedBuildingDetails
 
 logger = get_logger(__name__)
+
+# Extra attempts to give the model to fix its own malformed JSON before
+# giving up. Separate from groq_max_retries, which is for transient
+# API failures (rate limits, network errors), not bad output shape.
+MAX_SCHEMA_CORRECTION_ATTEMPTS = 2
 
 
 class IntakeEngine:
@@ -38,16 +43,10 @@ class IntakeEngine:
         wait=wait_exponential(multiplier=1, min=1, max=8),
         reraise=True,
     )
-    async def _generate(self, raw_text: str) -> str:
+    async def _generate(self, messages: list[dict]) -> str:
         response = await asyncio.wait_for(
             self._client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": INTAKE_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"Analyze this raw input:\n{raw_text}",
-                    },
-                ],
+                messages=messages,
                 model=settings.groq_model_name,
                 response_format={"type": "json_object"},
                 temperature=0.0,
@@ -92,12 +91,52 @@ class IntakeEngine:
             ) from exc
 
     async def process_input(self, raw_text: str) -> SanitizedBuildingDetails:
-        try:
-            raw_response = await self._generate(raw_text)
-        except Exception as exc:
-            raise IntakeEngineError(
-                f"Groq API call failed after {settings.groq_max_retries} "
-                f"attempts: {exc}"
-            ) from exc
+        messages = [
+            {"role": "system", "content": INTAKE_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Analyze this raw input:\n{raw_text}"},
+        ]
 
-        return self._parse_response(raw_response)
+        last_parse_error: IntakeResponseParsingError | None = None
+        for attempt in range(MAX_SCHEMA_CORRECTION_ATTEMPTS + 1):
+            try:
+                raw_response = await self._generate(messages)
+            except Exception as exc:
+                raise IntakeEngineError(
+                    f"Groq API call failed after {settings.groq_max_retries} "
+                    f"attempts: {exc}"
+                ) from exc
+
+            try:
+                details = self._parse_response(raw_response)
+            except IntakeResponseParsingError as exc:
+                last_parse_error = exc
+                logger.warning(
+                    f"Schema correction attempt {attempt + 1}/{MAX_SCHEMA_CORRECTION_ATTEMPTS}: {exc}"
+                )
+                messages.append({"role": "assistant", "content": raw_response})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "That JSON did not match the required schema: "
+                            f"{exc}\n\nRespond again with ONLY a corrected, "
+                            "flat JSON object using exactly the required "
+                            "top-level keys."
+                        ),
+                    }
+                )
+                continue
+
+            if not details.is_safe_input:
+                raise GuardrailRejection(
+                    "Input failed the safety guardrail check", reason="unsafe_input"
+                )
+            if not details.is_fire_safety_related:
+                raise GuardrailRejection(
+                    "Input is not related to buildings or fire safety",
+                    reason="off_topic",
+                )
+            return details
+
+        assert last_parse_error is not None
+        raise last_parse_error
