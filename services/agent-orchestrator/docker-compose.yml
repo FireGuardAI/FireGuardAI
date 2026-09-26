@@ -1,0 +1,37 @@
+services:
+  agent-orchestrator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-orchestrator
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8020:8020"
+    env_file:
+      - .env
+    environment:
+      - RETRIEVAL_MCP_URL=http://agent-retrieval-mcp:8011/mcp
+      - INTAKE_MCP_URL=http://agent-intake-mcp:8014/mcp
+      - REPORT_MCP_URL=http://agent-report-mcp:8013/mcp
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8020/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fireguard-net
+      - fireguard-api-db
+
+networks:
+  fireguard-net:
+    external: true
+    name: fireguard-vector-store_fireguard-net
+  # Joins fireguard-api's Postgres network directly for the
+  # audit_tool_trace table (see app/trace.py) — the trace store lives in
+  # the same Postgres instance fireguard-api already owns, not a new
+  # database, so this is the same network fireguard-api's own gateway
+  # container joins to reach it.
+  fireguard-api-db:
+    external: true
+    name: fireguard-api_fireguard-api-db
