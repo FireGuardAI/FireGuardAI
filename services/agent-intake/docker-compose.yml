@@ -23,6 +23,28 @@ services:
     # isn't strictly required today. It's joined anyway for consistency
     # and so an orchestrator can reach it by service name later.
 
+  # MCP sidecar: same image, exposes extract_building_details as an MCP
+  # tool for the agentic compliance loop (see app/mcp_server.py).
+  agent-intake-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-intake-mcp
+    command: ["python", "-m", "app.mcp_server"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8014:8014"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8014/mcp')\" || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fireguard-net
+
 networks:
   fireguard-net:
     external: true
