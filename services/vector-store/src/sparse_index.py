@@ -23,21 +23,43 @@ class SparseIndexBuilder:
             conn = sqlite3.connect(self._db_path)
             try:
                 conn.execute("DROP TABLE IF EXISTS chunks_fts")
+                pg_columns = ", ".join(f"pg_{g} UNINDEXED" for g in range(1, 9))
+                # tokenize='porter unicode61': without a stemmer, a query for
+                # "hospital" does not match a stored "hospitals" at all (FTS5
+                # does exact-token matching by default) — confirmed this broke
+                # a real retrieval attempt (a production-style query matched
+                # 99 unrelated chunks and excluded the one genuinely relevant
+                # chunk, which only ever appears in its plural form). Porter
+                # wraps unicode61 and reduces both query and indexed terms to
+                # a common stem, so singular/plural and simple suffix
+                # variants match without needing an exact literal hit.
                 conn.execute(
-                    """
+                    f"""
                     CREATE VIRTUAL TABLE chunks_fts USING fts5(
                         chunk_id UNINDEXED,
                         source UNINDEXED,
                         page UNINDEXED,
-                        text
+                        chapter UNINDEXED,
+                        {pg_columns},
+                        text,
+                        tokenize = 'porter unicode61'
                     )
                     """
                 )
+                pg_placeholders = ", ".join("?" * 8)
                 conn.executemany(
-                    "INSERT INTO chunks_fts (chunk_id, source, page, text) "
-                    "VALUES (?, ?, ?, ?)",
+                    f"INSERT INTO chunks_fts "
+                    f"(chunk_id, source, page, chapter, {', '.join(f'pg_{g}' for g in range(1, 9))}, text) "
+                    f"VALUES (?, ?, ?, ?, {pg_placeholders}, ?)",
                     [
-                        (c.chunk_id, c.source, c.page_number, c.text)
+                        (
+                            c.chunk_id,
+                            c.source,
+                            c.page_number,
+                            c.chapter if c.chapter is not None else 0,
+                            *(1 if g in c.purpose_groups else 0 for g in range(1, 9)),
+                            c.text,
+                        )
                         for c in chunks
                     ],
                 )
