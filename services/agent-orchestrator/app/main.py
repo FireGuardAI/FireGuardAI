@@ -8,7 +8,12 @@ order, with arguments and results.
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.agent_loop import AgentLoop
 from app.config import settings
@@ -22,6 +27,24 @@ logger = get_logger(__name__)
 
 app = FastAPI(title=settings.api_title, version=settings.api_version)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allow_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
 agent_loop: AgentLoop | None = None
 
 
@@ -31,7 +54,8 @@ async def health() -> dict:
 
 
 @app.post("/api/v1/audit", response_model=ComplianceResponse)
-async def run_audit(audit_request: AuditRequest) -> ComplianceResponse:
+@limiter.limit(settings.audit_rate_limit)
+async def run_audit(request: Request, audit_request: AuditRequest) -> ComplianceResponse:
     if agent_loop is None:
         raise HTTPException(status_code=503, detail="Agent loop not initialized")
 
