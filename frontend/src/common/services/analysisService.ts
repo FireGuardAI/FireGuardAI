@@ -1,7 +1,14 @@
 import { apiRequest } from './api'
 import type { AnalysisMode, AnalysisReport, RuleCheckItem, RuleStatus } from '../types/analysis'
 
-const KNOWN_STATUSES: RuleStatus[] = ['COMPLIANT', 'NON_COMPLIANT', 'PARTIAL', 'INSUFFICIENT_DATA']
+const KNOWN_STATUSES: RuleStatus[] = [
+  'COMPLIANT',
+  'NON_COMPLIANT',
+  'PARTIAL',
+  'INSUFFICIENT_DATA',
+  'NEEDS_CLARIFICATION',
+  'NOT_APPLICABLE',
+]
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}

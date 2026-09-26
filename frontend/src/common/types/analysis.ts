@@ -1,5 +1,19 @@
-// Matches the status vocabulary used by fireguard-agent-compliance's ComplianceRuleCheck.
-export type RuleStatus = 'COMPLIANT' | 'NON_COMPLIANT' | 'PARTIAL' | 'INSUFFICIENT_DATA'
+// Matches the status vocabulary used by fireguard-agent-compliance's (and
+// fireguard-agent-orchestrator's) ComplianceRuleCheck. NEEDS_CLARIFICATION and
+// NOT_APPLICABLE carry distinct meanings from INSUFFICIENT_DATA — see the
+// backend's REPORT_GENERATION_PROMPT — so they must not collapse into it here.
+export type RuleStatus =
+  | 'COMPLIANT'
+  | 'NON_COMPLIANT'
+  | 'PARTIAL'
+  | 'INSUFFICIENT_DATA'
+  | 'NEEDS_CLARIFICATION'
+  | 'NOT_APPLICABLE'
+
+// The building-level verdict — a distinct, smaller vocabulary from RuleStatus.
+// NEEDS_REVIEW must never be rendered as compliant or as "insufficient data":
+// it means no confirmed violation exists, but the audit is open/unresolved.
+export type OverallStatus = 'COMPLIANT' | 'NON_COMPLIANT' | 'NEEDS_REVIEW'
 
 export interface RuleCheckItem {
   rule_clause: string
