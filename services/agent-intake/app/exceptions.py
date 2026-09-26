@@ -28,3 +28,9 @@ class GuardrailRejection(IntakeError):
     def __init__(self, message: str, reason: str):
         super().__init__(message)
         self.reason = reason  # "unsafe_input" or "off_topic"
+
+
+class PdfExtractionError(IntakeError):
+    """Raised when the uploaded PDF can't be turned into usable text —
+    corrupt file, encrypted/password-protected, or no extractable text
+    (e.g. a scanned image with no text layer)."""
