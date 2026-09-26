@@ -23,6 +23,37 @@ services:
     networks:
       - fireguard-net
 
+  # MCP sidecar: same image, same underlying ChromaDB/FTS5 data, a
+  # different process exposing the retrieval + corpus-introspection
+  # tools over MCP Streamable HTTP for the agentic compliance loop (see
+  # app/mcp_server.py). Kept as a separate process rather than mounted
+  # onto the REST app's routes to avoid Streamable HTTP's own internal
+  # routing colliding with FastAPI's.
+  agent-retrieval-mcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fireguard-agent-retrieval-mcp
+    command: ["python", "-m", "app.mcp_server"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8011:8011"
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb
+    volumes:
+      - ../fireguard-vector-store/data:/app/data:ro
+      - ./data/hf_cache:/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8011/mcp')\" || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fireguard-net
+
 networks:
   fireguard-net:
     external: true

@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.exceptions import DenseSearchError, RerankError, SparseSearchError
 from app.logger import get_logger
-from app.schemas import ChunkResponse, RetrievalRequest
+from app.schemas import ChunkResponse, ClassificationRetrievalRequest, RetrievalRequest
 from app.services.dense_search import DenseSearchService
 from app.services.hybrid_fusion import reciprocal_rank_fusion
 from app.services.reranker import RerankerService
@@ -102,6 +102,35 @@ async def retrieve(request: RetrievalRequest) -> list[ChunkResponse]:
         raise HTTPException(status_code=503, detail=f"Reranking failed: {exc}") from exc
 
     return reranked[: request.top_k]
+
+
+@app.post("/api/v1/retrieve/by-classification", response_model=list[ChunkResponse])
+async def retrieve_by_classification(
+    request: ClassificationRetrievalRequest,
+) -> list[ChunkResponse]:
+    """Exact structured filter by chapter/Purpose Group, not a ranked
+    semantic search — see SparseSearchService.search_by_classification."""
+    if sparse_service is None:
+        raise HTTPException(status_code=503, detail="Search services not initialized")
+
+    try:
+        results = sparse_service.search_by_classification(
+            request.chapters, request.purpose_group, request.limit, request.query
+        )
+    except SparseSearchError as exc:
+        raise HTTPException(status_code=503, detail=f"Classification search failed: {exc}") from exc
+
+    return [
+        ChunkResponse(
+            id=r["id"],
+            text=r["text"],
+            rrf_score=0.0,
+            rerank_score=0.0,
+            found_by=["classification"],
+            metadata=r["metadata"],
+        )
+        for r in results
+    ]
 
 
 @app.on_event("startup")

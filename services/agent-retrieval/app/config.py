@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     )
     rerank_candidate_k: int = Field(default=20, gt=0)
 
+    # Port for the MCP server sidecar process (app/mcp_server.py) — a
+    # separate process from the REST app in this same container/image,
+    # not a path mounted onto the FastAPI app, to avoid Streamable HTTP's
+    # own internal routing colliding with FastAPI's.
+    mcp_port: int = Field(default=8011, gt=0)
+
     log_level: str = Field(default="INFO")
 
     class Config:
